@@ -6,14 +6,14 @@ import seaborn as sns
 import geopandas as gpd
 from sympy import re
 import category_encoders as ce
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.metrics import accuracy_score, classification_report, mean_squared_error
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import GridSearchCV
 from sklearn.tree import DecisionTreeClassifier, export_text
-from scipy.stats import chi2_contingency
+from scipy.stats import chi2_contingency,loguniform, randint
 
 baza = pd.read_csv("AgeDataset-V1-Part1.csv")
 
@@ -45,6 +45,8 @@ baza = baza[(baza["Age of death"] >= 0) & (baza["Age of death"] <= 120)]
 baza = baza[baza["Death year"] >= baza["Birth year"]]
 baza = baza.dropna().reset_index(drop=True)
 print(baza.shape[0])
+
+mmsc = MinMaxScaler()
 #Histogram danych
 def Histogram(df):
     
@@ -122,35 +124,39 @@ def DobieranieParametrow(model,y:pd.Series,X:pd.Series):
         )
 
   
-        param_grid = {
-            "C": [0.01, 0.1, 1, 10, 100],
+        param_dist = {
+            "C": loguniform(1e-3, 1e2),
             "solver": ["lbfgs", "saga"],
         }
     elif(model == "DecisionTree"):
         model_lr = DecisionTreeClassifier(random_state=42)
 
-        param_grid = {
+        param_dist = {
             "max_depth": [3, 5, 7, 10, None],
-            "min_samples_split": [2, 5, 10],
-            "min_samples_leaf": [1, 2, 4],
+            "min_samples_split": randint(2, 11),
+            "min_samples_leaf": randint(1,5),
         }
+    elif(model =="LinearRegression"):
+        model_lr = LinearRegression(
+            
+        )
 
 
-    grid_search = GridSearchCV(
+    random_search = RandomizedSearchCV(
         estimator=model_lr, 
-        param_grid=param_grid,
+        param_distributions=param_dist,
         cv=3,
         scoring="accuracy",
         n_jobs=-1,
     )
 
-    grid_search.fit(X_train_std, y_train)
+    random_search.fit(X_train_std, y_train)
 
-    print(f"Najlepsze parametry: {grid_search.best_params_}")
-    print(f"Najlepszy wynik na walidacji: {grid_search.best_score_:.2f}")
+    print(f"Najlepsze parametry: {random_search.best_params_}")
+    print(f"Najlepszy wynik na walidacji: {random_search.best_score_:.2f}")
 
 
-def Regresja(y:pd.Series, X:pd.Series) -> pd.Series:
+def RegresjaLogistyczna(y:pd.Series, X:pd.Series,c=0.01,solver="saga",) -> pd.Series:
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.3, stratify=y, random_state=42
@@ -203,6 +209,23 @@ def Drzewo(df) -> pd.Series:
     tree_clf = DecisionTreeClassifier(max_depth=5, random_state=42, min_samples_split=5, min_samples_leaf=2, class_weight='balanced')
     tree_clf.fit(X_train, y_train)
     y_pred = tree_clf.predict(X_test)
+    return (y_test, y_pred)
+
+def RegresjaLiniowa(y:pd.Series, X:pd.Series) -> pd.Series:
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.3, random_state=42
+    )
+
+    sc = MinMaxScaler()
+
+    X_train_std = sc.fit_transform(X_train)
+    X_test_std = sc.transform(X_test)
+
+    lr = LinearRegression()
+
+    lr.fit(X_train_std, y_train)
+    y_pred = lr.predict(X_test_std)
     return (y_test, y_pred)
 
 def Przedziały(kat1:pd.Series, kat2:pd.Series, Max_depth=5,Min_samples_leaf=2,Min_samples_split=5) -> list:
@@ -266,8 +289,9 @@ def KorelacjaCramera(df, kolumna1="Occupation", kolumna2="Manner of death"):
 
 
 baza["Occupation_death_mean_age"] = baza.groupby("Occupation")["Age of death"].transform("mean").round(1)
-
+baza["Occupation_death_mean_age_scaled"] = mmsc.fit_transform(baza[["Occupation_death_mean_age"]])
 baza = baza.dropna(subset=["Occupation_death_mean_age"])
+#print(baza["Occupation_death_mean_age_scaled"].head(5).round(2))
 
 koszyki = [-float('inf'), 40, 66, float('inf')]
 etykiety = [0, 1, 2]
@@ -276,6 +300,9 @@ etykiety = [0, 1, 2]
 baza["Death Age Group"]= pd.cut(baza["Age of death"], bins=koszyki, labels=etykiety)
 baza["job_safety_level"] = pd.cut(baza["Occupation_death_mean_age"], bins=koszyki, labels=etykiety)
 
+
+Walidacja(RegresjaLiniowa(y=baza["Age of death"], X=baza[["Occupation_death_mean_age_scaled", "Birth year"]]), test_type="regression")
+#DobieranieParametrow(model="LogisticRegression", y=baza["Age of death"], X=baza[["Occupation_death_mean_age_scaled"]])
 #Macierz(baza)
 #DobieranieParametrow(model="DecisionTree", y=baza[["Age of death"]], X=baza[["Birth year"]])
 Walidacja(Tree_Pred(baza[["Death Age Group"]], baza[["Birth year"]]), test_type="classification")
