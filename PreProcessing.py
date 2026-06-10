@@ -14,21 +14,24 @@ from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import GridSearchCV
 from sklearn.tree import DecisionTreeClassifier, export_text
 from scipy.stats import chi2_contingency,loguniform, randint
+import wget
 
+wget.download("https://github.com/Moradnejad/AgeDataset/blob/main/AgeDataset-V1-Part1.csv")
+#baza = pd.read_csv(baza)
+#def load_housing_data(housing_path="/content/housing.csv"):
+#  return pd.read_csv(housing_path)
 baza = pd.read_csv("AgeDataset-V1-Part1.csv")
 
-#Preprocessing danycb
-#Tylko ludzie urodzeni po 1900 roku
-baza = baza[baza['Birth year']>=1900]
-baza = baza[baza["Age of death"].between(15, 120)]
-#Przefiltrowanie innych płci ze wzgłedu na ich małą ilość w zbiorze danych
-baza = baza[baza["Gender"].isin(["Male", "Female"])]
-#Zamiana płci na wartości liczbowe
-mapping = {'Male': 0, 'Female': 1}
-baza["IsFemale"] = baza["Gender"].map(mapping)
 #Usunięcie pustych wartości
 baza = baza.dropna(subset=["Age of death", "Birth year", "Gender"])
-#Kodowanie zawodu
+
+baza = baza[baza['Birth year']>=1900]
+baza = baza[baza["Age of death"].between(15, 120)]
+
+baza = baza[baza["Gender"].isin(["Male", "Female"])]
+mapping = {'Male': 0, 'Female': 1}
+baza["IsFemale"] = baza["Gender"].map(mapping)
+
 baza["Occupation_code"] = baza["Occupation"].str.strip().str.lower()
 
 encoder = ce.BinaryEncoder(cols=['Occupation_code'])
@@ -37,8 +40,8 @@ baza = encoder.fit_transform(baza)
 kolumny_zawodow = [col for col in baza.columns if col.startswith('Occupation_code_')]
 #print("Wygenerowane kolumny dla zawodów:", kolumny_zawodow)
 
-#print(f"Liczba duplikatów: {baza.duplicated().sum()}")
-#print(baza.isnull().sum())
+print(f"Liczba duplikatów: {baza.duplicated().sum()}")
+print(baza.isnull().sum())
 #Standardyzacja nazw państw i usunięcie nieprawidłowych wartości wieku
 baza["Country"] = baza["Country"].str.strip().str.title()
 baza = baza[(baza["Age of death"] >= 0) & (baza["Age of death"] <= 120)]
