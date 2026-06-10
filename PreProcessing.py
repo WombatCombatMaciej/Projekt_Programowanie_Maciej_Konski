@@ -13,12 +13,14 @@ from sklearn.metrics import accuracy_score, classification_report, mean_squared_
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import GridSearchCV
 from sklearn.tree import DecisionTreeClassifier, export_text
+from scipy.stats import chi2_contingency
 
 baza = pd.read_csv("AgeDataset-V1-Part1.csv")
 
 #Preprocessing danycb
 #Tylko ludzie urodzeni po 1900 roku
 baza = baza[baza['Birth year']>=1900]
+baza = baza[baza["Age of death"].between(15, 120)]
 #Przefiltrowanie innych płci ze wzgłedu na ich małą ilość w zbiorze danych
 baza = baza[baza["Gender"].isin(["Male", "Female"])]
 #Zamiana płci na wartości liczbowe
@@ -27,21 +29,13 @@ baza["IsFemale"] = baza["Gender"].map(mapping)
 #Usunięcie pustych wartości
 baza = baza.dropna(subset=["Age of death", "Birth year", "Gender"])
 #Kodowanie zawodu
-baza["Occupation"] = baza["Occupation"].str.strip().str.lower()
-Zawody = ["Occupation_0",
-            "Occupation_1",
-            "Occupation_2",
-            "Occupation_3",
-            "Occupation_4",
-            "Occupation_5",
-            "Occupation_6",
-            "Occupation_7",
-            "Occupation_8",
-            "Occupation_9",
-            "Occupation_10"]
+baza["Occupation_code"] = baza["Occupation"].str.strip().str.lower()
 
-encoder = ce.BinaryEncoder(cols=['Occupation'])
+encoder = ce.BinaryEncoder(cols=['Occupation_code'])
 baza = encoder.fit_transform(baza)
+
+kolumny_zawodow = [col for col in baza.columns if col.startswith('Occupation_code_')]
+#print("Wygenerowane kolumny dla zawodów:", kolumny_zawodow)
 
 #print(f"Liczba duplikatów: {baza.duplicated().sum()}")
 #print(baza.isnull().sum())
@@ -49,7 +43,8 @@ baza = encoder.fit_transform(baza)
 baza["Country"] = baza["Country"].str.strip().str.title()
 baza = baza[(baza["Age of death"] >= 0) & (baza["Age of death"] <= 120)]
 baza = baza[baza["Death year"] >= baza["Birth year"]]
-
+baza = baza.dropna().reset_index(drop=True)
+print(baza.shape[0])
 #Histogram danych
 def Histogram(df):
     
@@ -94,7 +89,7 @@ def GestosPopulacji(df):
 #Tu do poprawki bo ta korelacja jest bez sensu na razie
 def Macierz(df):
     #Tu do poprawki bo ta korelacja jest bez sensu na razie
-    df = df[['Birth year', 'Death year', 'Age of death', 'Occupation Code']]
+    df = df[['Birth year', 'Death year', 'Age of death', 'job_safety_level',"IsFemale", "Occupation_death_mean_age"]]
     macierz_korelacji = df.corr()
     plt.figure(figsize=(8, 6))
     sns.heatmap(
@@ -110,16 +105,7 @@ def Macierz(df):
     plt.show()
 
 
-def DobieranieParametrow(df,model,x_data,y_data):
-    df = df[df["Age of death"].between(15, 120)]
-    X = df[
-        x_data
-    ]
-
-    y = pd.cut(
-        df[y_data], bins=[0, 9.5, 41.5, 120], labels=[0, 1, 2], include_lowest=True
-    )
-
+def DobieranieParametrow(model,y:pd.Series,X:pd.Series):
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.3, stratify=y, random_state=42
@@ -140,7 +126,7 @@ def DobieranieParametrow(df,model,x_data,y_data):
             "C": [0.01, 0.1, 1, 10, 100],
             "solver": ["lbfgs", "saga"],
         }
-    elif(model == "DDecisionTree"):
+    elif(model == "DecisionTree"):
         model_lr = DecisionTreeClassifier(random_state=42)
 
         param_grid = {
@@ -164,30 +150,7 @@ def DobieranieParametrow(df,model,x_data,y_data):
     print(f"Najlepszy wynik na walidacji: {grid_search.best_score_:.2f}")
 
 
-def Regresja(df):
-    df = df[df["Age of death"].between(15, 120)]
-    X = df[
-        [
-            "Occupation_0",
-            "Occupation_1",
-            "Occupation_2",
-            "Occupation_3",
-            "Occupation_4",
-            "Occupation_5",
-            "Occupation_6",
-            "Occupation_7",
-            "Occupation_8",
-            "Occupation_9",
-            "Occupation_10",
-            'Birth year',
-            "IsFemale"
-        ]
-    ]
-
-    y = pd.qcut(
-        df["Age of death"], q=3, labels=[0, 1, 2]
-    )
-
+def Regresja(y:pd.Series, X:pd.Series) -> pd.Series:
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.3, stratify=y, random_state=42
@@ -213,7 +176,7 @@ def Regresja(df):
     y_pred = re.predict(X_test_std)
     return (y_test, y_pred)
 
-def Drzewo(df):
+def Drzewo(df) -> pd.Series:
     df = df[df["Age of death"].between(15, 120)]
     X = df[
         [
@@ -242,43 +205,22 @@ def Drzewo(df):
     y_pred = tree_clf.predict(X_test)
     return (y_test, y_pred)
 
-def PrzedziałyWiekowe(df,kat1, kat2,tree_depth=5):
-    X_tree = df[[kat1]]
-    y_tree = df[kat2]
-    drzewo = DecisionTreeClassifier(max_depth=tree_depth, random_state=42, class_weight='balanced')
+def Przedziały(kat1:pd.Series, kat2:pd.Series, Max_depth=5,Min_samples_leaf=2,Min_samples_split=5) -> list:
+    X_tree = kat1
+    y_tree = kat2
+    drzewo = DecisionTreeClassifier(max_depth=Max_depth,min_samples_leaf=Min_samples_leaf,min_samples_split=Min_samples_split, random_state=42, class_weight='balanced')
     drzewo.fit(X_tree, y_tree)
     wewnetrzne_progi = drzewo.tree_.threshold
-    progi_wieku = sorted(list(set([round(float(p), 2) for p in wewnetrzne_progi if p != -2])))
-    print("Wyciągnięte progi:", progi_wieku)
-    df["AgeGroup"] = pd.cut(df[kat1], bins=[-1] + progi_wieku + [float('inf')], labels=False)
+    progi = sorted(list(set([round(float(p), 2) for p in wewnetrzne_progi if p != -2])))
+    print("Wyciągnięte progi:", progi)
+    #new_column = pd.cut(df[kat1], bins=[-1] + progi + [float('inf')], labels=False)
     #print(df[["Age of death", "AgeGroup"]].head(10))
-
+    return progi
     #print(export_text(drzewo, feature_names=["Age of death"]))
 
-    return (progi_wieku)
+    #return (progi)
 
-def DeathPred(df,progi_wieku,kat1="Age of death"):
-    df["AgeGroup"] = pd.cut(df[kat1], bins=[-1] + progi_wieku + [float('inf')], labels=False)
-    print(df[["Age of death", "AgeGroup"]].head(10))
-    X = df[
-        [
-            "Occupation_0",
-            "Occupation_1",
-            "Occupation_2",
-            "Occupation_3",
-            "Occupation_4",
-            "Occupation_5",
-            "Occupation_6",
-            "Occupation_7",
-            "Occupation_8",
-            "Occupation_9",
-            "Occupation_10",
-            'Birth year',
-            "IsFemale"
-        ]
-    ]
-    y = df["AgeGroup"]
-
+def Tree_Pred(y:pd.Series, X:pd.Series) -> pd.Series:
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, stratify=y, random_state=42)
 
@@ -298,4 +240,46 @@ def Walidacja(y_test_pred, test_type="classification"):
         print(f"Mean Squared Error: {mse}")
 
 
-Walidacja(Drzewo(baza),test_type="regression")
+
+
+def KorelacjaCramera(df, kolumna1="Occupation", kolumna2="Manner of death"):
+    # 1. Tworzymy tabelę krzyżową (częstości występowania)
+    tabela_krzyzowa = pd.crosstab(df[kolumna1], df[kolumna2])
+
+    # 2. Odpalamy test Chi-kwadrat
+    chi2, p_val, dof, expected = chi2_contingency(tabela_krzyzowa)
+
+    # 3. Obliczamy współczynnik V-Cramera
+    n = tabela_krzyzowa.sum().sum()
+    r, c = tabela_krzyzowa.shape
+    v_cramera = np.sqrt(chi2 / (n * min(r - 1, c - 1)))
+
+    print(f"--- Wyniki analizy dla {kolumna1} vs {kolumna2} ---")
+    print(f"p-value: {p_val:.5f}")
+    if p_val < 0.05:
+        print("-> Istnieje statystycznie istotna zależność między zawodem a powodem śmierci!")
+    else:
+        print("-> Brak istotnych dowodów na zależność.")
+    print(f"Współczynnik V-Cramera (siła związku): {v_cramera:.3f}")
+
+
+
+
+baza["Occupation_death_mean_age"] = baza.groupby("Occupation")["Age of death"].transform("mean").round(1)
+
+baza = baza.dropna(subset=["Occupation_death_mean_age"])
+
+koszyki = [-float('inf'), 40, 66, float('inf')]
+etykiety = [0, 1, 2]
+
+
+baza["Death Age Group"]= pd.cut(baza["Age of death"], bins=koszyki, labels=etykiety)
+baza["job_safety_level"] = pd.cut(baza["Occupation_death_mean_age"], bins=koszyki, labels=etykiety)
+
+#Macierz(baza)
+#DobieranieParametrow(model="DecisionTree", y=baza[["Age of death"]], X=baza[["Birth year"]])
+Walidacja(Tree_Pred(baza[["Death Age Group"]], baza[["Birth year"]]), test_type="classification")
+#baza.to_csv("Preprocessed_AgeDataset.csv", index=False)
+#print(baza.columns)
+#baza.head
+#GestosPopulacji(baza)
